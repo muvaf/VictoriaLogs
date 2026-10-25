@@ -54,14 +54,22 @@ func startKubernetesCollector(client *kubeAPIClient, currentNodeName, logsPath, 
 		return nil, fmt.Errorf("cannot access logs dir: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Bound startup requests without imposing a deadline on the subsequent watch.
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startupCancel()
 
-	currentNode, err := client.getNodeByName(ctx, currentNodeName)
+	currentNode, err := client.getNodeByName(startupCtx, currentNodeName)
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("cannot get information about current node %q: %w", currentNodeName, err)
 	}
 
+	pl, err := client.getNodePods(startupCtx, currentNodeName)
+	if err != nil {
+		return nil, fmt.Errorf("cannot get Pods on node %q: %w", currentNodeName, err)
+	}
+
+	// Failed API requests must not leave a tailer writing to the checkpoint file.
+	ctx, cancel := context.WithCancel(context.Background())
 	kc := &kubernetesCollector{
 		client:        client,
 		currentNode:   currentNode,
@@ -72,12 +80,6 @@ func startKubernetesCollector(client *kubeAPIClient, currentNodeName, logsPath, 
 	}
 
 	kc.tailer = tail.Start(checkpointsPath)
-
-	pl, err := client.getNodePods(ctx, currentNodeName)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("cannot get Pods on node %q: %w", currentNodeName, err)
-	}
 
 	// Start reading existing Pod logs.
 	for _, pod := range pl.Items {

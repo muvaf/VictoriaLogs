@@ -107,6 +107,9 @@ Here is the minimal configuration for `vlagent` to collect logs on the current K
 `vlagent` can send the copies of the collected logs into multiple destinations.
 See [replication and high availability docs](https://docs.victoriametrics.com/victorialogs/vlagent/#replication-and-high-availability) for details.
 
+The Kubernetes collector retries failed node discovery and initial node and pod-list requests with exponential backoff.
+The HTTP server, including `/health`, starts after collector initialization completes.
+
 ### Checkpoints
 
 `vlagent` uses checkpoints to persist its reading state across restarts, so logs are not re-sent after a Pod restart.

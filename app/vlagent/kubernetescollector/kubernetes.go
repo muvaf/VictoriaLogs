@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/logger"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/timeutil"
 
 	"github.com/VictoriaMetrics/VictoriaLogs/lib/logstorage"
 )
@@ -48,11 +49,6 @@ func Init(tmpDataPath string) {
 		logger.Fatalf("cannot create Kubernetes client: %s", err)
 	}
 
-	currentNodeName, err := getCurrentNodeName(c, isLocal)
-	if err != nil {
-		logger.Fatalf("cannot get current node name: %s", err)
-	}
-
 	path := *checkpointsPath
 	if len(path) == 0 {
 		path = filepath.Join(tmpDataPath, "vlagent-kubernetes-checkpoints.json")
@@ -66,13 +62,22 @@ func Init(tmpDataPath string) {
 		}
 	}
 
-	kc, err := startKubernetesCollector(c, currentNodeName, *logsPath, path, excludeF)
-	if err != nil {
-		logger.Fatalf("cannot start kubernetes collector: %s", err)
+	// Keep the HTTP server unready until the initial Kubernetes API requests succeed.
+	bt := timeutil.NewBackoffTimer(time.Second, 5*time.Second)
+	for {
+		currentNodeName, err := getCurrentNodeName(c, isLocal)
+		if err == nil {
+			var kc *kubernetesCollector
+			kc, err = startKubernetesCollector(c, currentNodeName, *logsPath, path, excludeF)
+			if err == nil {
+				collector = kc
+				logger.Infof("started Kubernetes log collector for node %q", currentNodeName)
+				return
+			}
+		}
+		logger.Errorf("cannot initialize Kubernetes collector: %s; will retry in %s", err, bt.CurrentDelay())
+		bt.Wait(nil)
 	}
-	collector = kc
-
-	logger.Infof("started Kubernetes log collector for node %q", currentNodeName)
 }
 
 func Stop() {
